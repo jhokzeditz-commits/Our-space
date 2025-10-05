@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import {
+  collection,
+  addDoc,
+  updateDoc,
+  doc,
+  onSnapshot,
+  serverTimestamp,
+  arrayUnion,
+} from "firebase/firestore";
+import { db } from "./firebase";
 
 export default function ImprovementPage() {
   const location = useLocation();
@@ -9,46 +19,41 @@ export default function ImprovementPage() {
   const [noteInput, setNoteInput] = useState("");
   const [notes, setNotes] = useState([]);
 
+  const notesCol = collection(db, "improvementNotes");
+
+  // Load notes in real-time
   useEffect(() => {
-    const stored = localStorage.getItem("improvementNotes");
-    if (stored) setNotes(JSON.parse(stored));
+    const unsubscribe = onSnapshot(notesCol, (snapshot) => {
+      const fetched = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      setNotes(fetched);
+    });
+    return () => unsubscribe();
   }, []);
 
-  const saveNotes = (allNotes) => {
-    localStorage.setItem("improvementNotes", JSON.stringify(allNotes));
-    setNotes(allNotes);
-  };
-
-  const handleSubmitNote = () => {
+  const handleSubmitNote = async () => {
     if (!noteInput.trim()) return;
 
-    const newNote = {
+    await addDoc(notesCol, {
       author: currentUser,
       recipient: partner,
       text: noteInput.trim(),
       replies: [],
-      timestamp: new Date().toLocaleString(), // timestamp
-    };
+      createdAt: serverTimestamp(),
+    });
 
-    saveNotes([...notes, newNote]);
     setNoteInput("");
   };
 
-  const handleAddReply = (index, replyText) => {
+  const handleAddReply = async (noteId, replyText) => {
     if (!replyText.trim()) return;
-    const updated = [...notes];
-    updated[index].replies.push({ 
-      author: currentUser, 
-      text: replyText,
-      timestamp: new Date().toLocaleString(), // timestamp
+    const noteDoc = doc(db, "improvementNotes", noteId);
+    await updateDoc(noteDoc, {
+      replies: arrayUnion({
+        author: currentUser,
+        text: replyText,
+        createdAt: serverTimestamp(),
+      }),
     });
-    saveNotes(updated);
-  };
-
-  const handleDeleteNote = (index) => {
-    const updated = [...notes];
-    updated.splice(index, 1);
-    saveNotes(updated);
   };
 
   const leftNotes = notes.filter((n) => n.author === partner);
@@ -60,6 +65,7 @@ export default function ImprovementPage() {
         {currentUser === "James" ? "How I can improve" : "How James can improve"}
       </h1>
 
+      {/* Input */}
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl p-8 flex flex-col gap-4">
         <textarea
           rows={4}
@@ -76,25 +82,28 @@ export default function ImprovementPage() {
         </button>
       </div>
 
+      {/* Two-column layout */}
       <div className="w-full max-w-6xl flex flex-col md:flex-row gap-6">
+        {/* Left: partner's notes */}
         <div className="flex-1 flex flex-col gap-4">
-          {leftNotes.map((n, i) => (
+          {leftNotes.map((n) => (
             <NoteCard
-              key={i}
+              key={n.id}
               note={n}
-              onReply={(text) => handleAddReply(notes.findIndex(note => note === n), text)}
-              onDelete={() => handleDeleteNote(notes.findIndex(note => note === n))}
+              currentUser={currentUser}
+              onReply={(text) => handleAddReply(n.id, text)}
             />
           ))}
         </div>
 
+        {/* Right: your notes */}
         <div className="flex-1 flex flex-col gap-4 items-end">
-          {rightNotes.map((n, i) => (
+          {rightNotes.map((n) => (
             <NoteCard
-              key={i}
+              key={n.id}
               note={n}
-              onReply={(text) => handleAddReply(notes.findIndex(note => note === n), text)}
-              onDelete={() => handleDeleteNote(notes.findIndex(note => note === n))}
+              currentUser={currentUser}
+              onReply={(text) => handleAddReply(n.id, text)}
             />
           ))}
         </div>
@@ -110,7 +119,7 @@ export default function ImprovementPage() {
   );
 }
 
-const NoteCard = ({ note, onReply, onDelete }) => {
+const NoteCard = ({ note, currentUser, onReply }) => {
   const [replyText, setReplyText] = useState("");
 
   const handleSendReply = () => {
@@ -123,22 +132,14 @@ const NoteCard = ({ note, onReply, onDelete }) => {
     <div className="bg-white rounded-2xl shadow-md p-4 flex flex-col gap-2 relative border-2 border-purple-300 max-w-md">
       <span className="font-semibold text-pink-600">{note.author} wrote:</span>
       <p>{note.text}</p>
-      <div className="text-xs text-gray-500 mt-1">{note.timestamp}</div>
-
-      <button
-        onClick={onDelete}
-        className="absolute top-2 right-2 text-red-500 hover:text-red-700 font-bold"
-      >
-        ×
-      </button>
 
       <div className="flex flex-col gap-2 mt-2">
         {note.replies.map((reply, i) => (
           <div key={i} className="bg-gray-100 rounded-xl p-2 pl-4">
             <span className="font-semibold text-gray-700">{reply.author}:</span> {reply.text}
-            <div className="text-xs text-gray-500">{reply.timestamp}</div>
           </div>
         ))}
+
         <div className="flex gap-2 mt-1">
           <input
             type="text"

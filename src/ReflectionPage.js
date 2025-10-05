@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import {
+  collection,
+  addDoc,
+  updateDoc,
+  doc,
+  onSnapshot,
+  serverTimestamp,
+  arrayUnion,
+} from "firebase/firestore";
+import { db } from "./firebase";
 
 export default function ReflectionPage() {
   const location = useLocation();
@@ -8,56 +18,44 @@ export default function ReflectionPage() {
 
   const [reflectionInput, setReflectionInput] = useState("");
   const [selectedEmoji, setSelectedEmoji] = useState("");
-  const [reflectionText, setReflectionText] = useState("");
   const [reflections, setReflections] = useState([]);
 
-  // Load all reflections from localStorage
+  const reflectionsCol = collection(db, "reflections");
+
+  // Load reflections in real-time
   useEffect(() => {
-    const stored = localStorage.getItem("dailyReflections");
-    if (stored) setReflections(JSON.parse(stored));
+    const unsubscribe = onSnapshot(reflectionsCol, (snapshot) => {
+      const fetched = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      setReflections(fetched);
+    });
+    return () => unsubscribe();
   }, []);
 
-  // Save reflections to localStorage
-  const saveReflections = (allReflections) => {
-    localStorage.setItem("dailyReflections", JSON.stringify(allReflections));
-    setReflections(allReflections);
-  };
-
-  const handleSubmitReflection = () => {
+  const handleSubmitReflection = async () => {
     if (!selectedEmoji || !reflectionInput.trim()) return;
 
-    const newReflection = {
+    await addDoc(reflectionsCol, {
       author: currentUser,
       text: reflectionInput.trim(),
       emoji: selectedEmoji,
       replies: [],
-      timestamp: new Date().toLocaleString(), // timestamp
-    };
-
-    const updatedReflections = [...reflections, newReflection];
-    saveReflections(updatedReflections);
+      createdAt: serverTimestamp(),
+    });
 
     setReflectionInput("");
     setSelectedEmoji("");
-    setReflectionText("");
   };
 
-  const handleAddReply = (index, replyText) => {
+  const handleAddReply = async (reflectionId, replyText) => {
     if (!replyText.trim()) return;
-
-    const updated = [...reflections];
-    updated[index].replies.push({ 
-      author: currentUser, 
-      text: replyText,
-      timestamp: new Date().toLocaleString(), // timestamp
+    const refDoc = doc(db, "reflections", reflectionId);
+    await updateDoc(refDoc, {
+      replies: arrayUnion({
+        author: currentUser,
+        text: replyText,
+        createdAt: serverTimestamp(),
+      }),
     });
-    saveReflections(updated);
-  };
-
-  const handleDeleteReflection = (index) => {
-    const updated = [...reflections];
-    updated.splice(index, 1);
-    saveReflections(updated);
   };
 
   const leftReflections = reflections.filter((r) => r.author === partner);
@@ -69,6 +67,7 @@ export default function ReflectionPage() {
         {currentUser}'s Reflection
       </h1>
 
+      {/* Reflection Input */}
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl p-8 flex flex-col gap-4">
         <div className="flex gap-4 text-2xl justify-center">
           {["😀", "😔", "😡", "😌", "😢"].map((emoji) => (
@@ -96,25 +95,28 @@ export default function ReflectionPage() {
         </button>
       </div>
 
+      {/* Reflections */}
       <div className="w-full max-w-6xl flex flex-col md:flex-row gap-6">
+        {/* Left: Partner's reflections */}
         <div className="flex-1 flex flex-col gap-4">
-          {leftReflections.map((r, i) => (
+          {leftReflections.map((r) => (
             <ReflectionCard
-              key={i}
+              key={r.id}
               reflection={r}
-              onReply={(text) => handleAddReply(reflections.findIndex(ref => ref === r), text)}
-              onDelete={() => handleDeleteReflection(reflections.findIndex(ref => ref === r))}
+              currentUser={currentUser}
+              onReply={(text) => handleAddReply(r.id, text)}
             />
           ))}
         </div>
 
+        {/* Right: Your reflections */}
         <div className="flex-1 flex flex-col gap-4 items-end">
-          {rightReflections.map((r, i) => (
+          {rightReflections.map((r) => (
             <ReflectionCard
-              key={i}
+              key={r.id}
               reflection={r}
-              onReply={(text) => handleAddReply(reflections.findIndex(ref => ref === r), text)}
-              onDelete={() => handleDeleteReflection(reflections.findIndex(ref => ref === r))}
+              currentUser={currentUser}
+              onReply={(text) => handleAddReply(r.id, text)}
             />
           ))}
         </div>
@@ -130,7 +132,7 @@ export default function ReflectionPage() {
   );
 }
 
-const ReflectionCard = ({ reflection, onReply, onDelete }) => {
+const ReflectionCard = ({ reflection, currentUser, onReply }) => {
   const [replyText, setReplyText] = useState("");
 
   const handleSendReply = () => {
@@ -144,22 +146,14 @@ const ReflectionCard = ({ reflection, onReply, onDelete }) => {
       <span className="font-semibold text-pink-600">{reflection.author} is feeling:</span>
       <p className="text-2xl">{reflection.emoji}</p>
       <p>{reflection.text}</p>
-      <div className="text-xs text-gray-500 mt-1">{reflection.timestamp}</div>
-
-      <button
-        onClick={onDelete}
-        className="absolute top-2 right-2 text-red-500 hover:text-red-700 font-bold"
-      >
-        ×
-      </button>
 
       <div className="flex flex-col gap-2 mt-2">
         {reflection.replies.map((reply, i) => (
           <div key={i} className="bg-gray-100 rounded-xl p-2 pl-4">
             <span className="font-semibold text-gray-700">{reply.author}:</span> {reply.text}
-            <div className="text-xs text-gray-500">{reply.timestamp}</div>
           </div>
         ))}
+
         <div className="flex gap-2 mt-1">
           <input
             type="text"

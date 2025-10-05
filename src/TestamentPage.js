@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import {
+  collection,
+  addDoc,
+  updateDoc,
+  doc,
+  onSnapshot,
+  serverTimestamp,
+  arrayUnion,
+} from "firebase/firestore";
+import { db } from "./firebase";
 
 export default function TestamentPage() {
   const { userName } = useParams();
@@ -9,36 +19,34 @@ export default function TestamentPage() {
   const [resolutionInput, setResolutionInput] = useState("");
   const [entries, setEntries] = useState([]);
 
-  // Load entries from localStorage
+  const testamentCol = collection(db, "jamesTestament");
+
+  // Load entries in real-time
   useEffect(() => {
-    const stored = localStorage.getItem("jamesTestamentEntries");
-    if (stored) setEntries(JSON.parse(stored));
+    const unsubscribe = onSnapshot(testamentCol, (snapshot) => {
+      const fetched = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      setEntries(fetched);
+    });
+    return () => unsubscribe();
   }, []);
 
-  // Save entries to localStorage
-  const saveEntries = (allEntries) => {
-    localStorage.setItem("jamesTestamentEntries", JSON.stringify(allEntries));
-    setEntries(allEntries);
-  };
-
-  const handleAddEntry = () => {
-    if (!bulletInput.trim() || !resolutionInput.trim()) return;
-
-    const newEntry = {
+  const handleAddBullet = async () => {
+    if (!bulletInput.trim()) return;
+    await addDoc(testamentCol, {
       bullet: bulletInput.trim(),
-      resolution: resolutionInput.trim(),
-      timestamp: new Date().toLocaleString(),
-    };
-
-    saveEntries([...entries, newEntry]);
+      resolution: "",
+      createdAt: serverTimestamp(),
+    });
     setBulletInput("");
-    setResolutionInput("");
   };
 
-  const handleDeleteEntry = (index) => {
-    const updated = [...entries];
-    updated.splice(index, 1);
-    saveEntries(updated);
+  const handleAddResolution = async (entryId) => {
+    if (!resolutionInput.trim()) return;
+    const entryDoc = doc(db, "jamesTestament", entryId);
+    await updateDoc(entryDoc, {
+      resolution: resolutionInput.trim(),
+    });
+    setResolutionInput("");
   };
 
   return (
@@ -47,60 +55,68 @@ export default function TestamentPage() {
         James Testament
       </h1>
 
-      {/* Input Section */}
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl p-8 flex flex-col gap-4">
-        <input
-          type="text"
-          placeholder="Bullet point..."
+      {/* Add new bullet */}
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl p-6 flex flex-col gap-4">
+        <textarea
+          rows={2}
+          placeholder="Enter a new bullet point..."
           value={bulletInput}
           onChange={(e) => setBulletInput(e.target.value)}
-          className="w-full border border-gray-300 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-yellow-300 text-lg"
-        />
-        <input
-          type="text"
-          placeholder="Resolution..."
-          value={resolutionInput}
-          onChange={(e) => setResolutionInput(e.target.value)}
-          className="w-full border border-gray-300 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-yellow-300 text-lg"
+          className="w-full border border-gray-300 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-yellow-300 text-lg resize-none"
         />
         <button
-          onClick={handleAddEntry}
-          className="bg-yellow-500 text-white px-6 py-3 rounded-2xl hover:bg-yellow-600 transition shadow-md w-max self-end"
+          onClick={handleAddBullet}
+          className="bg-yellow-500 text-white px-6 py-3 rounded-2xl hover:bg-yellow-600 transition shadow-md self-end"
         >
-          Add Entry
+          Add Bullet
         </button>
       </div>
 
-      {/* Entries Section */}
-      <div className="w-full max-w-6xl flex flex-col gap-6">
-        {entries.map((entry, i) => (
-          <div
-            key={i}
-            className="flex flex-col md:flex-row gap-4 bg-white rounded-2xl shadow-md p-4 border-2 border-yellow-400"
-          >
-            {/* Left: Bullet */}
-            <div className="flex-1">
-              <h2 className="font-bold text-lg text-gray-700 mb-1">Bullet</h2>
-              <ul className="list-disc list-inside">
-                <li>{entry.bullet}</li>
-              </ul>
-              <span className="text-xs text-gray-500">{entry.timestamp}</span>
+      {/* Display bullets and resolutions */}
+      <div className="w-full max-w-6xl flex flex-col md:flex-row gap-6">
+        {/* Left: bullets */}
+        <div className="flex-1 flex flex-col gap-4">
+          {entries.map((entry) => (
+            <div
+              key={entry.id}
+              className="bg-white rounded-2xl shadow-md p-4 border-2 border-yellow-300 max-w-md"
+            >
+              <span className="font-semibold text-yellow-700">Bullet:</span>
+              <p>{entry.bullet}</p>
             </div>
+          ))}
+        </div>
 
-            {/* Right: Resolution */}
-            <div className="flex-1">
-              <h2 className="font-bold text-lg text-gray-700 mb-1">Resolution</h2>
-              <p>{entry.resolution}</p>
-              <span className="text-xs text-gray-500">{entry.timestamp}</span>
-              <button
-                onClick={() => handleDeleteEntry(i)}
-                className="mt-2 text-red-500 hover:text-red-700 font-bold"
-              >
-                ×
-              </button>
+        {/* Right: resolutions */}
+        <div className="flex-1 flex flex-col gap-4 items-end">
+          {entries.map((entry) => (
+            <div
+              key={entry.id}
+              className="bg-white rounded-2xl shadow-md p-4 border-2 border-yellow-400 max-w-md flex flex-col gap-2"
+            >
+              <span className="font-semibold text-yellow-800">Resolution:</span>
+              {entry.resolution ? (
+                <p>{entry.resolution}</p>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Add a resolution..."
+                    value={resolutionInput}
+                    onChange={(e) => setResolutionInput(e.target.value)}
+                    className="flex-1 border border-gray-300 rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-yellow-300"
+                  />
+                  <button
+                    onClick={() => handleAddResolution(entry.id)}
+                    className="bg-yellow-500 text-white px-3 py-2 rounded-xl hover:bg-yellow-600 transition"
+                  >
+                    Save
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       <button
