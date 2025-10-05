@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { db } from "./firebase"; // your Firebase config
 import {
   collection,
+  doc,
   addDoc,
   updateDoc,
-  doc,
+  deleteDoc,
   onSnapshot,
-  serverTimestamp,
   arrayUnion,
 } from "firebase/firestore";
-import { db } from "./firebase";
 
 export default function ImprovementPage() {
   const location = useLocation();
@@ -21,15 +21,20 @@ export default function ImprovementPage() {
 
   const notesCol = collection(db, "improvementNotes");
 
-  // Load notes in real-time
+  // Load notes from Firestore
   useEffect(() => {
     const unsubscribe = onSnapshot(notesCol, (snapshot) => {
-      const fetched = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      setNotes(fetched);
+      const data = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setNotes(data);
     });
+
     return () => unsubscribe();
   }, []);
 
+  // Submit new note
   const handleSubmitNote = async () => {
     if (!noteInput.trim()) return;
 
@@ -38,22 +43,32 @@ export default function ImprovementPage() {
       recipient: partner,
       text: noteInput.trim(),
       replies: [],
-      createdAt: serverTimestamp(),
+      timestamp: new Date().toISOString(),
     });
 
     setNoteInput("");
   };
 
+  // Add reply
   const handleAddReply = async (noteId, replyText) => {
     if (!replyText.trim()) return;
+
+    const reply = {
+      author: currentUser,
+      text: replyText,
+      timestamp: new Date().toISOString(),
+    };
+
     const noteDoc = doc(db, "improvementNotes", noteId);
     await updateDoc(noteDoc, {
-      replies: arrayUnion({
-        author: currentUser,
-        text: replyText,
-        createdAt: serverTimestamp(),
-      }),
+      replies: arrayUnion(reply),
     });
+  };
+
+  // Delete note
+  const handleDeleteNote = async (noteId) => {
+    const noteDoc = doc(db, "improvementNotes", noteId);
+    await deleteDoc(noteDoc);
   };
 
   const leftNotes = notes.filter((n) => n.author === partner);
@@ -82,7 +97,7 @@ export default function ImprovementPage() {
         </button>
       </div>
 
-      {/* Two-column layout */}
+      {/* Notes layout */}
       <div className="w-full max-w-6xl flex flex-col md:flex-row gap-6">
         {/* Left: partner's notes */}
         <div className="flex-1 flex flex-col gap-4">
@@ -90,8 +105,8 @@ export default function ImprovementPage() {
             <NoteCard
               key={n.id}
               note={n}
-              currentUser={currentUser}
               onReply={(text) => handleAddReply(n.id, text)}
+              onDelete={() => handleDeleteNote(n.id)}
             />
           ))}
         </div>
@@ -102,8 +117,8 @@ export default function ImprovementPage() {
             <NoteCard
               key={n.id}
               note={n}
-              currentUser={currentUser}
               onReply={(text) => handleAddReply(n.id, text)}
+              onDelete={() => handleDeleteNote(n.id)}
             />
           ))}
         </div>
@@ -119,7 +134,7 @@ export default function ImprovementPage() {
   );
 }
 
-const NoteCard = ({ note, currentUser, onReply }) => {
+const NoteCard = ({ note, onReply, onDelete }) => {
   const [replyText, setReplyText] = useState("");
 
   const handleSendReply = () => {
@@ -133,10 +148,18 @@ const NoteCard = ({ note, currentUser, onReply }) => {
       <span className="font-semibold text-pink-600">{note.author} wrote:</span>
       <p>{note.text}</p>
 
+      <button
+        onClick={onDelete}
+        className="absolute top-2 right-2 text-red-500 hover:text-red-700 font-bold"
+      >
+        ×
+      </button>
+
       <div className="flex flex-col gap-2 mt-2">
         {note.replies.map((reply, i) => (
           <div key={i} className="bg-gray-100 rounded-xl p-2 pl-4">
-            <span className="font-semibold text-gray-700">{reply.author}:</span> {reply.text}
+            <span className="font-semibold text-gray-700">{reply.author}:</span> {reply.text}{" "}
+            <span className="text-xs text-gray-400">({new Date(reply.timestamp).toLocaleString()})</span>
           </div>
         ))}
 
